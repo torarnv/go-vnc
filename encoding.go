@@ -1,6 +1,8 @@
 package vnc
 
 import (
+	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"io"
 )
@@ -82,4 +84,54 @@ func (*DesktopSizePseudoEncoding) Read(c *vnc.ClientConn, rect *vnc.Rectangle, r
 
 func (*DesktopSizePseudoEncoding) Type() int32 {
 	return -223
+}
+
+// ZlibEncoding is Zlib encoded pixel data
+//
+// See RFC 6143 8.4.2
+type ZlibEncoding struct {
+	Colors     []vnc.Color
+	zlibReader *io.ReadCloser
+	zlibData   bytes.Buffer
+}
+
+func (ze *ZlibEncoding) Read(c *vnc.ClientConn, rect *vnc.Rectangle, r io.Reader) (vnc.Encoding, error) {
+	var compressedLength uint32
+	if err := binary.Read(r, binary.BigEndian, &compressedLength); err != nil {
+		return nil, err
+	}
+
+	// The RFB protocol expects us to read the entire compressed length;
+	// no more (which could happen if we just passed the reader through
+	// zlib.NewReader, due to the input not being a io.ByteReader), and
+	// no less (which could happen if the compressed length was larger
+	// than what's strictly required for the rect's colors), so we read
+	// all of the data up front, appending it to a buffer that the zlib
+	// decoding processes independently.
+	limitedReader := io.LimitedReader{r, int64(compressedLength)}
+	readBytes, err := io.Copy(&ze.zlibData, &limitedReader)
+	if uint32(readBytes) != compressedLength || err != nil {
+		return nil, err
+	}
+
+	// A single zlib stream is used for each RFB protocol connection,
+	// so we must re-use the zlib reader between each decode, as we
+	// can only read the zlib header once.
+	if ze.zlibReader == nil {
+		if zlibReader, err := zlib.NewReader(&ze.zlibData); err != nil {
+			return nil, err
+		} else {
+			ze.zlibReader = &zlibReader
+		}
+	}
+
+	if rawEnc, err := (&vnc.RawEncoding{}).Read(c, rect, *ze.zlibReader); err != nil {
+		return nil, err
+	} else {
+		return &ZlibEncoding{Colors: rawEnc.(*vnc.RawEncoding).Colors}, nil
+	}
+}
+
+func (*ZlibEncoding) Type() int32 {
+	return 6
 }
