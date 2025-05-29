@@ -67,3 +67,19 @@ func (*RawEncoding) Read(c *ClientConn, rect *Rectangle, r io.Reader) (Encoding,
 
 	return &RawEncoding{colors}, nil
 }
+
+// DesktopSize Pseudo-Encoding declares that the client is capable
+// of coping with a change in the framebuffer width and height.
+//
+// See RFC 6143 7.8.2
+type DesktopSizePseudoEncoding struct{}
+
+func (*DesktopSizePseudoEncoding) Read(c *vnc.ClientConn, rect *vnc.Rectangle, r io.Reader) (vnc.Encoding, error) {
+	c.FrameBufferWidth = rect.Width
+	c.FrameBufferHeight = rect.Height
+	return &DesktopSizePseudoEncoding{}, nil
+}
+
+func (*DesktopSizePseudoEncoding) Type() int32 {
+	return -223
+}
